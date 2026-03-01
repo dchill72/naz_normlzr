@@ -1,0 +1,65 @@
+# nas_normlzr configuration
+# Copy this file and edit for your setup.
+
+[roots]
+# Absolute paths to your NAS mount points
+movies = "/mnt/nas/movies"
+tv_shows = "/mnt/nas/tv"
+
+[patterns.movies]
+# Regexes tried in order — first match wins.
+# Named capture groups: title, year
+# The filename is pre-processed: dots/underscores replaced with spaces,
+# extension stripped.
+input_patterns = [
+    # "Movie Name (2009)" or "Movie Name [2009]"
+    '(?i)(?P<title>.+?)\s*[\(\[]\s*(?P<year>\d{4})\s*[\)\]]',
+    # "Movie Name 2009 1080p" (space/dot separated with year)
+    '(?i)(?P<title>.+?)\s+(?P<year>\d{4})(?:\s|$)',
+    # Just a title with no year
+    '(?P<title>.+)',
+]
+
+# Template for the movie subdirectory name
+directory_template = "{title} ({year})"
+
+# Template for the movie filename ({ext} includes the leading dot, e.g. ".mkv")
+file_template = "{title} ({year}){ext}"
+
+[patterns.tv_shows]
+# Regexes for TV episode filenames.
+# Named capture groups: show, season, episode, title (episode title, optional)
+input_patterns = [
+    # "Show Name S01E02 Episode Title"
+    '(?i)(?P<show>.+?)\s+[Ss](?P<season>\d{1,2})[Ee](?P<episode>\d{1,2})(?:\s+(?P<title>.+))?',
+    # "Show Name 1x02"
+    '(?i)(?P<show>.+?)\s+(?P<season>\d{1,2})x(?P<episode>\d{1,2})(?:\s+(?P<title>.+))?',
+]
+
+# Template for the show root directory.
+# {show_year} is fetched from TMDB/TVDB; empty parens are stripped automatically
+# when it is unavailable (e.g. API disabled).
+show_directory_template = "{show} ({show_year})"
+
+# Template for the season subdirectory
+season_directory_template = "Season {season:02}"
+
+# Template used when an episode title is available (Plex canonical format)
+episode_file_template = "{show} ({show_year}) - s{season:02}e{episode:02} - {title}{ext}"
+
+# Template used when no episode title is available
+episode_file_template_no_title = "{show} ({show_year}) - s{season:02}e{episode:02}{ext}"
+
+[api]
+# Get a free key at https://www.themoviedb.org/settings/api
+tmdb_api_key = ""
+
+# Get a key at https://thetvdb.com/api-information
+tvdb_api_key = ""
+
+# Set to false to skip API lookups and rely solely on filename parsing
+enable_api_fallback = true
+
+[ui]
+# Number of file rows shown in the browser panel
+browser_height = 20

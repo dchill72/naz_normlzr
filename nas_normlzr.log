@@ -1,0 +1,9 @@
+[2m2026-03-01T01:05:03.616741Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m Movies root does not exist: /mnt/nas/movies
+[2m2026-03-01T01:05:03.619285Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m TV shows root does not exist: /mnt/nas/tv
+[2m2026-03-01T01:06:06.252127Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m Movies root does not exist: /mnt/nas/movies
+[2m2026-03-01T01:06:06.254938Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m TV shows root does not exist: /mnt/nas/tv
+[2m2026-03-01T01:11:28.740591Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m Movies root does not exist: /mnt/nas/movies
+[2m2026-03-01T01:11:28.744101Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m TV shows root does not exist: /mnt/nas/tv
+[2m2026-03-01T01:12:27.293081Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m TV shows root does not exist: /mnt/nas/tv
+[2m2026-03-01T01:15:11.880537Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m Movies root does not exist: /mnt/nas/movies
+[2m2026-03-01T01:15:11.883621Z[0m [33m WARN[0m [2mnas_normlzr::media::scanner[0m[2m:[0m TV shows root does not exist: /mnt/nas/tv
