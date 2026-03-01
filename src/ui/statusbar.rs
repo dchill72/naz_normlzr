@@ -15,6 +15,7 @@ fn hints_for_state(state: &AppState) -> Vec<Hint> {
     match state {
         AppState::Scanning => vec![Hint("q", "quit")],
         AppState::Browsing => vec![
+            Hint("Tab", "switch tab"),
             Hint("j/k", "navigate"),
             Hint("Enter", "preview"),
             Hint("a", "approve"),
@@ -27,6 +28,7 @@ fn hints_for_state(state: &AppState) -> Vec<Hint> {
             Hint("q", "quit"),
         ],
         AppState::Previewing => vec![
+            Hint("Tab", "switch tab"),
             Hint("j/k", "navigate"),
             Hint("Enter", "back"),
             Hint("a", "approve"),

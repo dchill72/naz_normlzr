@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::config::Config;
 use crate::media::renamer::{compute_proposed_path, execute_rename};
 use crate::media::scanner;
-use crate::media::{MediaFile, ParsedMetadata, RenameStatus};
+use crate::media::{MediaFile, MediaType, ParsedMetadata, RenameStatus};
 use crate::metadata::MetadataResolver;
 use crate::ui;
 
@@ -39,17 +39,47 @@ pub enum AppState {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppTab {
+    Movies,
+    TvShows,
+}
+
+impl AppTab {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Movies => "Movies",
+            Self::TvShows => "TV Shows",
+        }
+    }
+
+    fn media_type(self) -> MediaType {
+        match self {
+            Self::Movies => MediaType::Movie,
+            Self::TvShows => MediaType::TvEpisode,
+        }
+    }
+}
+
 // ── Internal messages (background task → main loop) ──────────────────────────
 
 pub enum AppMsg {
-    ScanComplete(Vec<MediaFile>),
-    ScanError(String),
+    ScanComplete {
+        scan_id: u64,
+        files: Vec<MediaFile>,
+    },
+    ScanError {
+        scan_id: u64,
+        error: String,
+    },
     MetadataResolved {
+        scan_id: u64,
         idx: usize,
         metadata: ParsedMetadata,
         proposed_path: PathBuf,
     },
     MetadataFailed {
+        scan_id: u64,
         idx: usize,
         error: String,
     },
@@ -66,12 +96,14 @@ pub enum AppMsg {
 
 pub struct App {
     pub state: AppState,
+    pub active_tab: AppTab,
     pub config: Config,
     pub files: Vec<MediaFile>,
     pub selected_idx: usize,
     pub scroll_offset: usize,
     pub status_msg: String,
     pub dry_run: bool,
+    scan_id: u64,
     msg_tx: mpsc::Sender<AppMsg>,
     msg_rx: mpsc::Receiver<AppMsg>,
 }
@@ -81,12 +113,14 @@ impl App {
         let (msg_tx, msg_rx) = mpsc::channel(256);
         Ok(Self {
             state: AppState::Scanning,
+            active_tab: AppTab::Movies,
             config,
             files: Vec::new(),
             selected_idx: 0,
             scroll_offset: 0,
             status_msg: "Scanning…".into(),
             dry_run,
+            scan_id: 0,
             msg_tx,
             msg_rx,
         })
@@ -110,7 +144,7 @@ impl App {
         let backend = CrosstermBackend::new(std::io::stdout());
         let mut terminal = Terminal::new(backend)?;
 
-        self.start_scan();
+        self.trigger_scan();
 
         let mut events = EventStream::new();
 
@@ -161,6 +195,7 @@ impl App {
             AppState::Browsing | AppState::Previewing => {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+                    KeyCode::Tab => self.switch_tab(),
                     KeyCode::Down | KeyCode::Char('j') => self.select_next(),
                     KeyCode::Up | KeyCode::Char('k') => self.select_prev(),
                     KeyCode::Enter => {
@@ -175,12 +210,7 @@ impl App {
                     KeyCode::Char('S') => self.skip_all(),
                     KeyCode::Char('R') => self.start_rename_approved().await?,
                     KeyCode::Char('r') => {
-                        self.state = AppState::Scanning;
-                        self.files.clear();
-                        self.selected_idx = 0;
-                        self.scroll_offset = 0;
-                        self.status_msg = "Scanning…".into();
-                        self.start_scan();
+                        self.trigger_scan();
                     }
                     KeyCode::Char('p') => {
                         let movies = self
@@ -241,12 +271,7 @@ impl App {
                         } else {
                             Some(PathBuf::from(tv_shows.trim()))
                         };
-                        self.state = AppState::Scanning;
-                        self.files.clear();
-                        self.selected_idx = 0;
-                        self.scroll_offset = 0;
-                        self.status_msg = "Scanning…".into();
-                        self.start_scan();
+                        self.trigger_scan();
                     }
                     KeyCode::Backspace => {
                         match active {
@@ -300,25 +325,40 @@ impl App {
 
     async fn handle_msg(&mut self, msg: AppMsg) -> Result<()> {
         match msg {
-            AppMsg::ScanComplete(files) => {
+            AppMsg::ScanComplete { scan_id, files } => {
+                if scan_id != self.scan_id {
+                    return Ok(());
+                }
                 let count = files.len();
                 self.files = files;
+                self.ensure_tab_has_files();
+                self.selected_idx = 0;
                 self.state = AppState::Browsing;
-                self.status_msg = format!("Found {count} files. [a] approve  [s] skip  [R] run renames");
+                self.status_msg = format!(
+                    "Found {count} files. {} tab active. [Tab] switch tabs",
+                    self.active_tab.label()
+                );
                 // Kick off API lookups for files that need them.
                 self.start_metadata_lookups();
             }
 
-            AppMsg::ScanError(e) => {
+            AppMsg::ScanError { scan_id, error } => {
+                if scan_id != self.scan_id {
+                    return Ok(());
+                }
                 self.state = AppState::Browsing;
-                self.status_msg = format!("Scan error: {e}");
+                self.status_msg = format!("Scan error: {error}");
             }
 
             AppMsg::MetadataResolved {
+                scan_id,
                 idx,
                 metadata,
                 proposed_path,
             } => {
+                if scan_id != self.scan_id {
+                    return Ok(());
+                }
                 if let Some(file) = self.files.get_mut(idx) {
                     file.resolved_metadata = Some(metadata);
                     file.proposed_path = Some(proposed_path);
@@ -330,7 +370,14 @@ impl App {
                 }
             }
 
-            AppMsg::MetadataFailed { idx, error } => {
+            AppMsg::MetadataFailed {
+                scan_id,
+                idx,
+                error,
+            } => {
+                if scan_id != self.scan_id {
+                    return Ok(());
+                }
                 if let Some(file) = self.files.get_mut(idx) {
                     file.status = RenameStatus::Error(error);
                 }
@@ -356,8 +403,9 @@ impl App {
     // ── Navigation ────────────────────────────────────────────────────────────
 
     fn select_next(&mut self) {
-        if !self.files.is_empty() {
-            self.selected_idx = (self.selected_idx + 1).min(self.files.len() - 1);
+        let visible = self.visible_file_indices();
+        if !visible.is_empty() {
+            self.selected_idx = (self.selected_idx + 1).min(visible.len() - 1);
         }
     }
 
@@ -368,7 +416,8 @@ impl App {
     // ── Actions ───────────────────────────────────────────────────────────────
 
     fn approve_selected(&mut self) {
-        if let Some(file) = self.files.get_mut(self.selected_idx) {
+        let selected = self.selected_file_index();
+        if let Some(file) = selected.and_then(|idx| self.files.get_mut(idx)) {
             if file.status == RenameStatus::Pending || file.status == RenameStatus::Skipped {
                 file.status = RenameStatus::Approved;
             }
@@ -376,7 +425,8 @@ impl App {
     }
 
     fn skip_selected(&mut self) {
-        if let Some(file) = self.files.get_mut(self.selected_idx) {
+        let selected = self.selected_file_index();
+        if let Some(file) = selected.and_then(|idx| self.files.get_mut(idx)) {
             if file.status == RenameStatus::Pending || file.status == RenameStatus::Approved {
                 file.status = RenameStatus::Skipped;
             }
@@ -385,34 +435,65 @@ impl App {
 
     fn approve_all(&mut self) {
         for file in &mut self.files {
-            if file.status == RenameStatus::Pending {
+            if Self::file_matches_tab(file, self.active_tab)
+                && file.status == RenameStatus::Pending
+            {
                 file.status = RenameStatus::Approved;
             }
         }
-        self.status_msg = "All pending renames approved. Press [R] to execute.".into();
+        self.status_msg = format!(
+            "All pending {} renames approved. Press [R] to execute.",
+            self.active_tab.label()
+        );
     }
 
     fn skip_all(&mut self) {
         for file in &mut self.files {
-            if file.status == RenameStatus::Pending {
+            if Self::file_matches_tab(file, self.active_tab)
+                && file.status == RenameStatus::Pending
+            {
                 file.status = RenameStatus::Skipped;
             }
         }
-        self.status_msg = "All pending renames skipped.".into();
+        self.status_msg = format!("All pending {} renames skipped.", self.active_tab.label());
+    }
+
+    fn switch_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            AppTab::Movies => AppTab::TvShows,
+            AppTab::TvShows => AppTab::Movies,
+        };
+        self.selected_idx = 0;
+        self.status_msg = format!("Switched to {} tab.", self.active_tab.label());
     }
 
     // ── Background tasks ──────────────────────────────────────────────────────
 
-    fn start_scan(&self) {
+    fn trigger_scan(&mut self) {
+        self.scan_id = self.scan_id.wrapping_add(1);
+        self.state = AppState::Scanning;
+        self.files.clear();
+        self.selected_idx = 0;
+        self.scroll_offset = 0;
+        self.status_msg = "Scanning…".into();
+        self.start_scan(self.scan_id);
+    }
+
+    fn start_scan(&self, scan_id: u64) {
         let tx = self.msg_tx.clone();
         let config = self.config.clone();
         tokio::spawn(async move {
             match scanner::scan_all(&config) {
                 Ok(files) => {
-                    let _ = tx.send(AppMsg::ScanComplete(files)).await;
+                    let _ = tx.send(AppMsg::ScanComplete { scan_id, files }).await;
                 }
                 Err(e) => {
-                    let _ = tx.send(AppMsg::ScanError(e.to_string())).await;
+                    let _ = tx
+                        .send(AppMsg::ScanError {
+                            scan_id,
+                            error: e.to_string(),
+                        })
+                        .await;
                 }
             }
         });
@@ -422,6 +503,7 @@ impl App {
         if !self.config.api_enabled() {
             return;
         }
+        let scan_id = self.scan_id;
         let resolver = MetadataResolver::new(&self.config);
         let tx = self.msg_tx.clone();
         let config = self.config.clone();
@@ -449,6 +531,7 @@ impl App {
                             Ok(Some(proposed)) => {
                                 let _ = tx
                                     .send(AppMsg::MetadataResolved {
+                                        scan_id,
                                         idx,
                                         metadata: meta,
                                         proposed_path: proposed,
@@ -458,6 +541,7 @@ impl App {
                             _ => {
                                 let _ = tx
                                     .send(AppMsg::MetadataFailed {
+                                        scan_id,
                                         idx,
                                         error: "Could not compute path after API lookup".into(),
                                     })
@@ -468,6 +552,7 @@ impl App {
                     Ok(None) => {
                         let _ = tx
                             .send(AppMsg::MetadataFailed {
+                                scan_id,
                                 idx,
                                 error: "No metadata found".into(),
                             })
@@ -476,6 +561,7 @@ impl App {
                     Err(e) => {
                         let _ = tx
                             .send(AppMsg::MetadataFailed {
+                                scan_id,
                                 idx,
                                 error: e.to_string(),
                             })
@@ -491,12 +577,18 @@ impl App {
             .files
             .iter()
             .enumerate()
-            .filter(|(_, f)| f.status == RenameStatus::Approved)
+            .filter(|(_, f)| {
+                Self::file_matches_tab(f, self.active_tab)
+                    && f.status == RenameStatus::Approved
+            })
             .map(|(i, _)| i)
             .collect();
 
         if approved.is_empty() {
-            self.status_msg = "No approved renames. Press [a] to approve files first.".into();
+            self.status_msg = format!(
+                "No approved {} renames. Press [a] to approve files first.",
+                self.active_tab.label()
+            );
             return Ok(());
         }
 
@@ -567,17 +659,74 @@ impl App {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    fn file_matches_tab(file: &MediaFile, tab: AppTab) -> bool {
+        file.media_type == tab.media_type()
+    }
+
+    fn ensure_tab_has_files(&mut self) {
+        if !self
+            .files
+            .iter()
+            .any(|f| Self::file_matches_tab(f, self.active_tab))
+            && self
+                .files
+                .iter()
+                .any(|f| Self::file_matches_tab(f, AppTab::Movies))
+        {
+            self.active_tab = AppTab::Movies;
+        } else if !self
+            .files
+            .iter()
+            .any(|f| Self::file_matches_tab(f, self.active_tab))
+            && self
+                .files
+                .iter()
+                .any(|f| Self::file_matches_tab(f, AppTab::TvShows))
+        {
+            self.active_tab = AppTab::TvShows;
+        }
+    }
+
+    pub fn visible_file_indices(&self) -> Vec<usize> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| Self::file_matches_tab(f, self.active_tab))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn selected_file_index(&self) -> Option<usize> {
+        let visible = self.visible_file_indices();
+        visible.get(self.selected_idx).copied()
+    }
+
+    pub fn selected_file(&self) -> Option<&MediaFile> {
+        self.selected_file_index()
+            .and_then(|idx| self.files.get(idx))
+    }
+
+    pub fn tab_file_count(&self) -> usize {
+        self.visible_file_indices().len()
+    }
+
     pub fn approved_count(&self) -> usize {
         self.files
             .iter()
-            .filter(|f| f.status == RenameStatus::Approved)
+            .filter(|f| {
+                Self::file_matches_tab(f, self.active_tab)
+                    && f.status == RenameStatus::Approved
+            })
             .count()
     }
 
     pub fn pending_count(&self) -> usize {
         self.files
             .iter()
-            .filter(|f| f.status == RenameStatus::Pending)
+            .filter(|f| {
+                Self::file_matches_tab(f, self.active_tab)
+                    && f.status == RenameStatus::Pending
+            })
             .count()
     }
 }

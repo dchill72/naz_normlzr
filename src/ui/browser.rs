@@ -25,18 +25,30 @@ fn status_badge(status: &RenameStatus) -> (&'static str, Color) {
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let pending = app.pending_count();
     let approved = app.approved_count();
-    let title = format!(" Files ({} pending, {} approved) ", pending, approved);
+    let total = app.tab_file_count();
+    let title = format!(
+        " {} ({} total, {} pending, {} approved) ",
+        app.active_tab.label(),
+        total,
+        pending,
+        approved
+    );
 
-    let items: Vec<ListItem> = app
-        .files
+    let visible = app.visible_file_indices();
+    let items: Vec<ListItem> = visible
         .iter()
-        .map(|file| {
+        .map(|&idx| {
+            let file = &app.files[idx];
             let (badge, badge_color) = status_badge(&file.status);
             let name = file.display_name();
             // Truncate name to fit the panel width (rough estimate).
             let max_name_len = area.width.saturating_sub(8) as usize;
-            let name = if name.len() > max_name_len {
-                format!("{}…", &name[..max_name_len.saturating_sub(1)])
+            let name = if name.chars().count() > max_name_len {
+                let prefix: String = name
+                    .chars()
+                    .take(max_name_len.saturating_sub(1))
+                    .collect();
+                format!("{prefix}…")
             } else {
                 name.to_string()
             };
@@ -64,7 +76,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .highlight_symbol("▶ ");
 
     let mut state = ListState::default();
-    if !app.files.is_empty() {
+    if !visible.is_empty() {
         state.select(Some(app.selected_idx));
     }
 

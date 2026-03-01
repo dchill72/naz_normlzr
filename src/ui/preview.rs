@@ -15,15 +15,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .title(" Preview ")
         .border_style(Style::default().fg(Color::DarkGray));
 
-    if app.files.is_empty() {
-        let para = Paragraph::new("No files found.\nCheck your config.toml roots.")
+    let Some(file) = app.selected_file() else {
+        let para = Paragraph::new(format!(
+            "No {} files found.\nCheck your config.toml roots.",
+            app.active_tab.label()
+        ))
             .block(block)
             .style(Style::default().fg(Color::DarkGray));
         f.render_widget(para, area);
         return;
-    }
-
-    let file = &app.files[app.selected_idx];
+    };
     let inner = block.inner(area);
     f.render_widget(block, area);
 
