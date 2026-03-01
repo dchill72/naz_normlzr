@@ -3,8 +3,8 @@
 
 [roots]
 # Absolute paths to your NAS mount points
-movies = "/mnt/nas/movies"
-tv_shows = "/mnt/nas/tv"
+movies = ""
+tv_shows = ""
 
 [patterns.movies]
 # Regexes tried in order — first match wins.
@@ -36,10 +36,8 @@ input_patterns = [
     '(?i)(?P<show>.+?)\s+(?P<season>\d{1,2})x(?P<episode>\d{1,2})(?:\s+(?P<title>.+))?',
 ]
 
-# Template for the show root directory.
-# {show_year} is fetched from TMDB/TVDB; empty parens are stripped automatically
-# when it is unavailable (e.g. API disabled).
-show_directory_template = "{show} ({show_year})"
+# Template for the show root directory (single folder per show).
+show_directory_template = "{show}"
 
 # Template for the season subdirectory
 season_directory_template = "Season {season:02}"

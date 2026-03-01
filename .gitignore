@@ -1,3 +1,4 @@
 target/
 .claude
 *.log
+config.toml

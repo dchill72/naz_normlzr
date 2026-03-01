@@ -54,7 +54,7 @@ impl TvParser {
 
         for pattern in &self.patterns {
             if let Some(caps) = pattern.captures(&normalized) {
-                let show = caps.name("show").map(|m| clean_name(m.as_str()));
+                let show = caps.name("show").map(|m| clean_tv_show_name(m.as_str()));
                 let season = caps
                     .name("season")
                     .map(|m| m.as_str().trim().to_string());
@@ -110,6 +110,31 @@ fn clean_name(s: &str) -> String {
         .to_string()
 }
 
+/// TV filenames often include a disambiguation year before SxxEyy
+/// (e.g. "Archer 2009 S01E01"). Strip that trailing year from show name.
+fn clean_tv_show_name(s: &str) -> String {
+    let cleaned = clean_name(s);
+    let mut parts: Vec<&str> = cleaned.split_whitespace().collect();
+    if parts.len() <= 1 {
+        return cleaned;
+    }
+
+    if let Some(last) = parts.last().copied() {
+        if last.len() == 4
+            && last.chars().all(|c| c.is_ascii_digit())
+            && last
+                .parse::<u16>()
+                .map(|y| (1900..=2099).contains(&y))
+                .unwrap_or(false)
+        {
+            parts.pop();
+            return parts.join(" ");
+        }
+    }
+
+    cleaned
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +185,26 @@ mod tests {
         assert_eq!(meta.show.as_deref(), Some("Breaking Bad"));
         assert_eq!(meta.season.as_deref(), Some("01"));
         assert_eq!(meta.episode.as_deref(), Some("03"));
+    }
+
+    #[test]
+    fn parse_tv_strips_trailing_show_year() {
+        use crate::config::TvPatterns;
+        let patterns = TvPatterns {
+            input_patterns: vec![
+                r"(?i)(?P<show>.+?)\s+[Ss](?P<season>\d{1,2})[Ee](?P<episode>\d{1,2})(?:\s+(?P<title>.+))?".to_string(),
+            ],
+            show_directory_template: String::new(),
+            season_directory_template: String::new(),
+            episode_file_template: String::new(),
+            episode_file_template_no_title: String::new(),
+        };
+        let parser = TvParser::new(&patterns).unwrap();
+        let meta = parser
+            .parse("Archer.2009.S01E04.Killing.Utne.1080p.WEB.DD5.1.AV1-DBMS.mkv")
+            .unwrap();
+        assert_eq!(meta.show.as_deref(), Some("Archer"));
+        assert_eq!(meta.season.as_deref(), Some("01"));
+        assert_eq!(meta.episode.as_deref(), Some("04"));
     }
 }
